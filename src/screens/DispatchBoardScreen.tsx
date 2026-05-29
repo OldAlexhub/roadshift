@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, useWindowDimensions,
 } from 'react-native';
@@ -7,16 +7,21 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { Colors } from '../theme/colors';
 import { getLevel } from '../data/levels';
-import {
-  VehicleAssignment, Stop, PlayerPlan, VEHICLE_SPECS,
-} from '../types/game';
+import { VehicleAssignment, Stop, PlayerPlan, VEHICLE_SPECS } from '../types/game';
 import { validateAndSimulate } from '../engine/scoringEngine';
-import GameBoard from '../components/GameBoard';
+import GameBoard, { BoardTap } from '../components/GameBoard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'DispatchBoard'>;
 
-const RIDER_ICONS: Record<string, string> = {
-  standard: 'P', priority: '!', accessible: 'A', group: 'G',
+const STOP_ICONS: Record<string, string> = {
+  standard_pickup:   'P',
+  priority_pickup:   '!',
+  accessible_pickup: 'A',
+  group_pickup:      'G',
+};
+
+const RIDER_TYPE_LABELS: Record<string, string> = {
+  standard: 'Standard', priority: 'Priority', accessible: 'Accessible', group: 'Group',
 };
 
 export default function DispatchBoardScreen({ navigation, route }: Props) {
@@ -28,24 +33,23 @@ export default function DispatchBoardScreen({ navigation, route }: Props) {
   const [assignments, setAssignments] = useState<VehicleAssignment[]>([]);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const boardHeight = Math.min(height * 0.48, 340);
+  const boardHeight = Math.min(height * 0.46, 340);
   const boardWidth  = width - 32;
 
   if (!levelMaybe) {
     return (
       <View style={styles.container}>
-        <Text style={{ color: Colors.danger }}>Level not found</Text>
+        <Text style={{ color: Colors.danger, padding: 20 }}>Level not found</Text>
       </View>
     );
   }
-
   const level = levelMaybe;
 
   function getAssignment(vehicleId: string): VehicleAssignment {
     return assignments.find(a => a.vehicleId === vehicleId) ?? { vehicleId, stops: [] };
   }
 
-  function setAssignment(vehicleId: string, stops: Stop[]) {
+  function updateAssignment(vehicleId: string, stops: Stop[]) {
     setAssignments(prev => {
       const others = prev.filter(a => a.vehicleId !== vehicleId);
       if (stops.length === 0) return others;
@@ -53,85 +57,110 @@ export default function DispatchBoardScreen({ navigation, route }: Props) {
     });
   }
 
-  function getCapacityUsed(vehicleId: string): number {
-    const assignment = getAssignment(vehicleId);
-    const onboard: string[] = [];
-    let max = 0;
-    let current = 0;
-    for (const stop of assignment.stops) {
+  // Returns the current peak capacity used by a vehicle in a stop sequence
+  function peakCapacity(stops: Stop[]): number {
+    let current = 0, max = 0;
+    for (const stop of stops) {
       const rider = level.riders.find(r => r.id === stop.riderId);
       if (!rider) continue;
-      if (stop.type === 'pickup') {
-        current += rider.capacityUsed;
-        max = Math.max(max, current);
-        onboard.push(rider.id);
-      } else {
-        current -= rider.capacityUsed;
-      }
+      if (stop.type === 'pickup')  current += rider.capacityUsed;
+      if (stop.type === 'dropoff') current -= rider.capacityUsed;
+      if (current > max) max = current;
     }
     return max;
   }
 
-  function handleVehicleTap(vehicleId: string) {
-    setSelectedVehicleId(prev => prev === vehicleId ? null : vehicleId);
-    setValidationError(null);
-  }
+  function handleBoardTap(tap: BoardTap) {
+    const { nodeId, riderId, stopType } = tap;
 
-  function handleNodeTap(nodeId: string) {
-    if (!selectedVehicleId) return;
+    // If no rider info, this is a vehicle tap or blank tap
+    if (!riderId || !stopType) {
+      // Check if it matches a vehicle position
+      const tappedVehicle = level.vehicles.find(v => v.startNodeId === nodeId);
+      if (tappedVehicle) {
+        setSelectedVehicleId(prev => prev === tappedVehicle.id ? null : tappedVehicle.id);
+      } else {
+        setSelectedVehicleId(null);
+      }
+      setValidationError(null);
+      return;
+    }
+
+    // Must have a vehicle selected
+    if (!selectedVehicleId) {
+      setValidationError('Tap a vehicle first, then tap pickup (P) or dropoff (D) markers.');
+      return;
+    }
 
     const vehicle = level.vehicles.find(v => v.id === selectedVehicleId);
     if (!vehicle) return;
-    const spec = VEHICLE_SPECS[vehicle.type];
-
-    const riderAtPickup  = level.riders.find(r => r.pickupNodeId  === nodeId);
-    const riderAtDropoff = level.riders.find(r => r.dropoffNodeId === nodeId);
+    const spec  = VEHICLE_SPECS[vehicle.type];
+    const rider = level.riders.find(r => r.id === riderId);
+    if (!rider) return;
 
     const assignment = getAssignment(selectedVehicleId);
-    const alreadyPickedUp = assignment.stops.some(s => s.riderId === riderAtPickup?.id && s.type === 'pickup');
-    const hasBeenDroppedOff = assignment.stops.some(s => s.riderId === riderAtDropoff?.id && s.type === 'dropoff');
 
-    if (riderAtPickup && !alreadyPickedUp) {
-      // Accessibility check
-      if (riderAtPickup.type === 'accessible' && !spec.accessible) {
-        setValidationError(`${riderAtPickup.id}: Needs an Access Van`);
+    if (stopType === 'pickup') {
+      // Prevent duplicate pickup for this vehicle
+      if (assignment.stops.some(s => s.riderId === riderId && s.type === 'pickup')) {
+        setValidationError(`${RIDER_TYPE_LABELS[rider.type]} rider pickup already added to this vehicle.`);
         return;
       }
-      // Capacity check (rough - check current max)
+      // Accessibility check
+      if (rider.type === 'accessible' && !spec.accessible) {
+        setValidationError(`This vehicle is not accessible. Use an Access Van for accessible riders.`);
+        return;
+      }
+      // Capacity check: simulate adding this pickup
+      const testStops: Stop[] = [
+        ...assignment.stops,
+        { type: 'pickup', riderId: rider.id, nodeId: rider.pickupNodeId },
+      ];
+      if (peakCapacity(testStops) > spec.capacity) {
+        setValidationError(`${spec.label} is full (capacity ${spec.capacity}). Cannot add more riders.`);
+        return;
+      }
+      // Add pickup stop
       const newStops: Stop[] = [
         ...assignment.stops,
-        { type: 'pickup',  riderId: riderAtPickup.id, nodeId },
-        { type: 'dropoff', riderId: riderAtPickup.id, nodeId: riderAtPickup.dropoffNodeId },
+        { type: 'pickup', riderId: rider.id, nodeId: rider.pickupNodeId },
       ];
-      let onboard: string[] = [];
-      let current = 0;
-      let exceeded = false;
-      for (const stop of newStops) {
-        const r = level.riders.find(rx => rx.id === stop.riderId);
-        if (!r) continue;
-        if (stop.type === 'pickup') {
-          current += r.capacityUsed;
-          if (current > spec.capacity) { exceeded = true; break; }
-          onboard.push(r.id);
-        } else {
-          current -= r.capacityUsed;
-        }
-      }
-      if (exceeded) {
-        setValidationError(`${spec.label} capacity would be exceeded`);
+      updateAssignment(selectedVehicleId, newStops);
+      setValidationError(null);
+
+    } else {
+      // stopType === 'dropoff'
+      // Must have picked up this rider first on this vehicle
+      const pickedUp = assignment.stops.some(s => s.riderId === riderId && s.type === 'pickup');
+      if (!pickedUp) {
+        setValidationError(`Add the pickup (P) for this rider before the dropoff (D).`);
         return;
       }
-      setAssignment(selectedVehicleId, newStops);
+      // Prevent duplicate dropoff for this vehicle
+      if (assignment.stops.some(s => s.riderId === riderId && s.type === 'dropoff')) {
+        setValidationError(`Dropoff for this rider is already planned.`);
+        return;
+      }
+      const newStops: Stop[] = [
+        ...assignment.stops,
+        { type: 'dropoff', riderId: rider.id, nodeId: rider.dropoffNodeId },
+      ];
+      updateAssignment(selectedVehicleId, newStops);
       setValidationError(null);
-    } else if (riderAtDropoff && !hasBeenDroppedOff) {
-      setValidationError(`Tap the rider pickup point first`);
     }
   }
 
-  function removeRider(vehicleId: string, riderId: string) {
+  function removeStop(vehicleId: string, index: number) {
     const assignment = getAssignment(vehicleId);
-    const newStops = assignment.stops.filter(s => s.riderId !== riderId);
-    setAssignment(vehicleId, newStops);
+    const removedStop = assignment.stops[index];
+
+    // If removing a pickup, also remove the corresponding dropoff
+    const newStops = assignment.stops.filter((s, i) => {
+      if (i === index) return false;
+      if (removedStop.type === 'pickup' && s.riderId === removedStop.riderId && s.type === 'dropoff') return false;
+      return true;
+    });
+    updateAssignment(vehicleId, newStops);
     setValidationError(null);
   }
 
@@ -141,14 +170,27 @@ export default function DispatchBoardScreen({ navigation, route }: Props) {
     setValidationError(null);
   }
 
-  const allRidersAssigned = (() => {
-    const assignedRiders = new Set(assignments.flatMap(a => a.stops.map(s => s.riderId)));
-    return level.riders.every(r => assignedRiders.has(r.id));
-  })();
+  // Check all riders have both pickup and dropoff across all vehicles
+  const riderCompletionStatus = level.riders.map(r => {
+    let hasPickup  = false;
+    let hasDropoff = false;
+    for (const a of assignments) {
+      if (a.stops.some(s => s.riderId === r.id && s.type === 'pickup'))  hasPickup = true;
+      if (a.stops.some(s => s.riderId === r.id && s.type === 'dropoff')) hasDropoff = true;
+    }
+    return { rider: r, hasPickup, hasDropoff, complete: hasPickup && hasDropoff };
+  });
+
+  const allComplete = riderCompletionStatus.every(s => s.complete);
+  const incompleteCount = riderCompletionStatus.filter(s => !s.complete).length;
 
   function handleStartShift() {
-    if (!allRidersAssigned) {
-      setValidationError('Assign all riders before starting');
+    if (!allComplete) {
+      const missing = riderCompletionStatus
+        .filter(s => !s.complete)
+        .map(s => s.hasPickup ? `${s.rider.id}: missing dropoff` : `${s.rider.id}: missing pickup`)
+        .join(', ');
+      setValidationError(`Incomplete plan: ${missing}`);
       return;
     }
 
@@ -156,17 +198,22 @@ export default function DispatchBoardScreen({ navigation, route }: Props) {
     const result = validateAndSimulate(level, plan);
 
     if (!result.valid) {
-      setValidationError(result.errorMessage ?? 'Invalid plan');
+      setValidationError(result.errorMessage ?? 'Invalid plan - check stop order');
       return;
     }
 
     navigation.navigate('LiveShift', { levelId, result });
   }
 
+  const selectedVehicle = level.vehicles.find(v => v.id === selectedVehicleId);
+  const selectedSpec    = selectedVehicle ? VEHICLE_SPECS[selectedVehicle.type] : null;
+
   return (
     <View style={styles.root}>
       <View style={styles.container}>
         <SafeAreaView style={styles.safe} edges={['top']}>
+
+          {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity
               onPress={() =>
@@ -179,26 +226,35 @@ export default function DispatchBoardScreen({ navigation, route }: Props) {
             >
               <Text style={styles.backText}>{'< Exit'}</Text>
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Level {levelId}: {level.name}</Text>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              Level {levelId}: {level.name}
+            </Text>
             <TouchableOpacity onPress={resetPlan}>
               <Text style={styles.resetText}>Reset</Text>
             </TouchableOpacity>
           </View>
 
+          {/* Error banner */}
           {validationError && (
             <View style={styles.errorBanner}>
               <Text style={styles.errorText}>{validationError}</Text>
             </View>
           )}
 
-          {selectedVehicleId && (
-            <View style={styles.hint}>
+          {/* Context hint */}
+          <View style={styles.hintBar}>
+            {selectedVehicle ? (
               <Text style={styles.hintText}>
-                Tap a rider (P/!/A/G) to assign. Tap background to deselect.
+                {selectedSpec?.label} selected  |  Tap P=pickup, D=dropoff, or another vehicle
               </Text>
-            </View>
-          )}
+            ) : (
+              <Text style={styles.hintText}>
+                Tap a vehicle to select it, then tap P (pickup) or D (dropoff) markers
+              </Text>
+            )}
+          </View>
 
+          {/* City map board */}
           <View style={styles.boardContainer}>
             <GameBoard
               cityMap={level.cityMap}
@@ -206,55 +262,87 @@ export default function DispatchBoardScreen({ navigation, route }: Props) {
               riders={level.riders}
               assignments={assignments}
               selectedVehicleId={selectedVehicleId}
-              onNodeTap={handleNodeTap}
-              onVehicleTap={handleVehicleTap}
+              onTap={handleBoardTap}
               boardWidth={boardWidth}
               boardHeight={boardHeight}
             />
           </View>
 
-          <View style={styles.legend}>
-            <Text style={styles.legendItem}>P=Standard  !=Priority  A=Accessible  G=Group</Text>
-            {level.cityMap.edges.some(e => e.type === 'congested') && <Text style={styles.legendItem}>Red roads: congested</Text>}
-            {level.cityMap.edges.some(e => e.type === 'rain_slow') && <Text style={styles.legendItem}>Blue roads: rain-slowed</Text>}
-            {level.cityMap.edges.some(e => e.type === 'closed')    && <Text style={styles.legendItem}>Dark roads: closed</Text>}
+          {/* Map legend */}
+          <View style={styles.legendRow}>
+            <Text style={styles.legendItem}>Circle = Pickup (P/!/A/G)</Text>
+            <Text style={styles.legendItem}>Square = Dropoff (D)</Text>
+            {level.cityMap.edges.some(e => e.type === 'congested') && <Text style={styles.legendItem}>Red = congested</Text>}
+            {level.cityMap.edges.some(e => e.type === 'rain_slow') && <Text style={styles.legendItem}>Blue = rain</Text>}
+            {level.cityMap.edges.some(e => e.type === 'closed')    && <Text style={styles.legendItem}>Dashed = closed</Text>}
           </View>
 
-          <ScrollView style={styles.assignmentPanel} contentContainerStyle={{ padding: 12, gap: 10 }}>
+          {/* Assignment panels */}
+          <ScrollView style={styles.assignmentScroll} contentContainerStyle={{ padding: 10, gap: 8, paddingBottom: 4 }}>
+
+            {/* Rider completion overview */}
+            <View style={styles.riderOverview}>
+              {riderCompletionStatus.map(({ rider, hasPickup, hasDropoff, complete }) => (
+                <View key={rider.id} style={[styles.riderPill, complete && styles.riderPillDone]}>
+                  <Text style={[styles.riderPillText, complete && styles.riderPillTextDone]}>
+                    {RIDER_TYPE_LABELS[rider.type].slice(0, 3)}
+                    {hasPickup ? ' P' : ' _'}
+                    {hasDropoff ? ' D' : ' _'}
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            {/* Per-vehicle stop lists */}
             {level.vehicles.map(v => {
-              const spec       = VEHICLE_SPECS[v.type];
+              const spec = VEHICLE_SPECS[v.type];
               const assignment = getAssignment(v.id);
-              const capUsed    = getCapacityUsed(v.id);
               const isSelected = v.id === selectedVehicleId;
+              const capUsed    = peakCapacity(assignment.stops);
 
               return (
                 <TouchableOpacity
                   key={v.id}
                   style={[styles.vehicleCard, isSelected && styles.vehicleCardSelected]}
-                  onPress={() => handleVehicleTap(v.id)}
+                  onPress={() => {
+                    setSelectedVehicleId(prev => prev === v.id ? null : v.id);
+                    setValidationError(null);
+                  }}
+                  activeOpacity={0.8}
                 >
                   <View style={styles.vehicleCardHeader}>
                     <Text style={styles.vehicleCardName}>{spec.label}</Text>
-                    <Text style={styles.vehicleCardCap}>
-                      {capUsed}/{spec.capacity} {spec.accessible ? '(Accessible)' : ''}
-                    </Text>
+                    <View style={styles.vehicleCardRight}>
+                      {spec.accessible && <Text style={styles.accessibleBadge}>Accessible</Text>}
+                      <Text style={styles.vehicleCapText}>Cap {capUsed}/{spec.capacity}</Text>
+                    </View>
                   </View>
-                  {assignment.stops.filter(s => s.type === 'pickup').map(stop => {
-                    const rider = level.riders.find(r => r.id === stop.riderId);
-                    if (!rider) return null;
-                    return (
-                      <View key={stop.riderId} style={styles.riderRow}>
-                        <Text style={styles.riderRowText}>
-                          {RIDER_ICONS[rider.type]} {rider.type} {rider.deadline ? `(deadline: ${rider.deadline}s)` : ''}
-                        </Text>
-                        <TouchableOpacity onPress={() => removeRider(v.id, rider.id)}>
-                          <Text style={styles.removeBtn}>x</Text>
-                        </TouchableOpacity>
-                      </View>
-                    );
-                  })}
-                  {assignment.stops.length === 0 && (
-                    <Text style={styles.noAssignment}>Tap vehicle, then tap riders on map to assign</Text>
+
+                  {assignment.stops.length === 0 ? (
+                    <Text style={styles.emptyHint}>
+                      {isSelected ? 'Now tap P (pickup) or D (dropoff) on the map' : 'Tap to select, then plan stops on the map'}
+                    </Text>
+                  ) : (
+                    <View style={styles.stopList}>
+                      {assignment.stops.map((stop, idx) => {
+                        const rider = level.riders.find(r => r.id === stop.riderId);
+                        return (
+                          <View key={idx} style={[styles.stopRow, stop.type === 'dropoff' && styles.stopRowDropoff]}>
+                            <Text style={styles.stopIndex}>{idx + 1}.</Text>
+                            <View style={[styles.stopTypeBadge, stop.type === 'dropoff' && styles.stopTypeBadgeDropoff]}>
+                              <Text style={styles.stopTypeBadgeText}>{stop.type === 'pickup' ? 'PICK' : 'DROP'}</Text>
+                            </View>
+                            <Text style={styles.stopRiderText} numberOfLines={1}>
+                              {rider ? RIDER_TYPE_LABELS[rider.type] : stop.riderId}
+                              {rider?.deadline ? ` (${rider.deadline}s)` : ''}
+                            </Text>
+                            <TouchableOpacity onPress={() => removeStop(v.id, idx)} style={styles.removeBtn}>
+                              <Text style={styles.removeBtnText}>x</Text>
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      })}
+                    </View>
                   )}
                 </TouchableOpacity>
               );
@@ -262,14 +350,15 @@ export default function DispatchBoardScreen({ navigation, route }: Props) {
           </ScrollView>
         </SafeAreaView>
 
+        {/* Footer */}
         <SafeAreaView edges={['bottom']}>
           <View style={styles.footer}>
             <TouchableOpacity
-              style={[styles.startBtn, !allRidersAssigned && styles.startBtnDisabled]}
+              style={[styles.startBtn, !allComplete && styles.startBtnDisabled]}
               onPress={handleStartShift}
             >
               <Text style={styles.startBtnText}>
-                {allRidersAssigned ? 'START SHIFT' : `Assign ${level.riders.length - assignments.flatMap(a => a.stops.filter(s => s.type === 'pickup')).length} more rider(s)`}
+                {allComplete ? 'START SHIFT' : `${incompleteCount} rider${incompleteCount > 1 ? 's' : ''} not fully planned`}
               </Text>
             </TouchableOpacity>
           </View>
@@ -280,32 +369,46 @@ export default function DispatchBoardScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  root:              { flex: 1 },
-  container:         { flex: 1, backgroundColor: Colors.background },
-  safe:              { flex: 1 },
-  header:            { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  backText:          { color: Colors.primary, fontSize: 14 },
-  headerTitle:       { fontSize: 14, fontWeight: '700', color: Colors.textPrimary, flex: 1, textAlign: 'center' },
-  resetText:         { color: Colors.warning, fontSize: 14 },
-  errorBanner:       { backgroundColor: Colors.danger + '33', paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: Colors.danger + '55' },
-  errorText:         { color: Colors.danger, fontSize: 13 },
-  hint:              { backgroundColor: Colors.primary + '22', paddingHorizontal: 16, paddingVertical: 6 },
-  hintText:          { color: Colors.primaryLight, fontSize: 12 },
-  boardContainer:    { alignItems: 'center', paddingHorizontal: 16, backgroundColor: Colors.mapBackground, paddingVertical: 8 },
-  legend:            { paddingHorizontal: 16, paddingVertical: 4, gap: 2 },
-  legendItem:        { fontSize: 10, color: Colors.textMuted },
-  assignmentPanel:   { flex: 1 },
-  vehicleCard:       { backgroundColor: Colors.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: Colors.border, gap: 8 },
-  vehicleCardSelected: { borderColor: Colors.primary, backgroundColor: Colors.surfaceAlt },
-  vehicleCardHeader: { flexDirection: 'row', justifyContent: 'space-between' },
-  vehicleCardName:   { fontSize: 14, fontWeight: '700', color: Colors.textPrimary },
-  vehicleCardCap:    { fontSize: 12, color: Colors.textMuted },
-  riderRow:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: Colors.surfaceAlt, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
-  riderRowText:      { fontSize: 13, color: Colors.textSecondary },
-  removeBtn:         { color: Colors.danger, fontSize: 16, fontWeight: '700', paddingHorizontal: 4 },
-  noAssignment:      { fontSize: 12, color: Colors.textMuted, fontStyle: 'italic' },
-  footer:            { padding: 12 },
-  startBtn:          { backgroundColor: Colors.primary, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  startBtnDisabled:  { backgroundColor: Colors.surfaceAlt },
-  startBtnText:      { color: '#fff', fontSize: 16, fontWeight: '700' },
+  root:               { flex: 1 },
+  container:          { flex: 1, backgroundColor: Colors.background },
+  safe:               { flex: 1 },
+  header:             { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  backText:           { color: Colors.primary, fontSize: 14, minWidth: 48 },
+  headerTitle:        { fontSize: 14, fontWeight: '700', color: Colors.textPrimary, flex: 1, textAlign: 'center', paddingHorizontal: 4 },
+  resetText:          { color: Colors.warning, fontSize: 14, minWidth: 48, textAlign: 'right' },
+  errorBanner:        { backgroundColor: Colors.danger + '28', paddingHorizontal: 14, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: Colors.danger + '44' },
+  errorText:          { color: Colors.danger, fontSize: 12 },
+  hintBar:            { backgroundColor: Colors.surfaceAlt, paddingHorizontal: 14, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  hintText:           { color: Colors.primaryLight, fontSize: 11 },
+  boardContainer:     { alignItems: 'center', paddingHorizontal: 16, backgroundColor: Colors.mapBackground, paddingVertical: 6 },
+  legendRow:          { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 14, paddingVertical: 4, gap: 6 },
+  legendItem:         { fontSize: 10, color: Colors.textMuted },
+  assignmentScroll:   { flex: 1 },
+  riderOverview:      { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 4 },
+  riderPill:          { backgroundColor: Colors.surfaceAlt, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderColor: Colors.border },
+  riderPillDone:      { borderColor: Colors.success + '66', backgroundColor: Colors.success + '14' },
+  riderPillText:      { fontSize: 10, color: Colors.textMuted, fontFamily: 'monospace' },
+  riderPillTextDone:  { color: Colors.success },
+  vehicleCard:        { backgroundColor: Colors.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: Colors.border },
+  vehicleCardSelected:{ borderColor: Colors.primary, backgroundColor: Colors.surfaceAlt },
+  vehicleCardHeader:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  vehicleCardName:    { fontSize: 14, fontWeight: '700', color: Colors.textPrimary },
+  vehicleCardRight:   { flexDirection: 'row', gap: 6, alignItems: 'center' },
+  accessibleBadge:    { fontSize: 10, color: Colors.vehicleAccess, backgroundColor: Colors.vehicleAccess + '22', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
+  vehicleCapText:     { fontSize: 11, color: Colors.textMuted },
+  emptyHint:          { fontSize: 11, color: Colors.textMuted, fontStyle: 'italic' },
+  stopList:           { gap: 4 },
+  stopRow:            { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: Colors.mapBackground, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5 },
+  stopRowDropoff:     { backgroundColor: Colors.background },
+  stopIndex:          { fontSize: 11, color: Colors.textMuted, width: 16 },
+  stopTypeBadge:      { backgroundColor: Colors.primary + '33', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
+  stopTypeBadgeDropoff: { backgroundColor: Colors.success + '28' },
+  stopTypeBadgeText:  { fontSize: 10, fontWeight: '700', color: Colors.primaryLight },
+  stopRiderText:      { flex: 1, fontSize: 12, color: Colors.textSecondary },
+  removeBtn:          { paddingHorizontal: 6, paddingVertical: 2 },
+  removeBtnText:      { color: Colors.danger, fontSize: 14, fontWeight: '700' },
+  footer:             { paddingHorizontal: 14, paddingVertical: 10 },
+  startBtn:           { backgroundColor: Colors.primary, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  startBtnDisabled:   { backgroundColor: Colors.surfaceAlt },
+  startBtnText:       { color: '#fff', fontSize: 15, fontWeight: '700' },
 });

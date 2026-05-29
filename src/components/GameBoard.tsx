@@ -1,9 +1,15 @@
 import React, { useCallback } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text } from 'react-native';
-import Svg, { Line, Circle, G, Text as SvgText } from 'react-native-svg';
+import { View } from 'react-native';
+import Svg, { Line, Circle, G, Text as SvgText, Rect } from 'react-native-svg';
 import { CityMap, MapNode, VehicleDef, RiderDef, VehicleAssignment, VEHICLE_SPECS } from '../types/game';
 import { Colors } from '../theme/colors';
 import { getNodePosition, dijkstra } from '../engine/routeEngine';
+
+export interface BoardTap {
+  nodeId: string;
+  riderId?: string;
+  stopType?: 'pickup' | 'dropoff';
+}
 
 interface Props {
   cityMap: CityMap;
@@ -11,8 +17,7 @@ interface Props {
   riders: RiderDef[];
   assignments: VehicleAssignment[];
   selectedVehicleId: string | null;
-  onNodeTap: (nodeId: string) => void;
-  onVehicleTap: (vehicleId: string) => void;
+  onTap: (tap: BoardTap) => void;
   boardWidth: number;
   boardHeight: number;
 }
@@ -48,8 +53,7 @@ const RIDER_LABELS: Record<string, string> = {
 };
 
 export default function GameBoard({
-  cityMap, vehicles, riders, assignments, selectedVehicleId,
-  onNodeTap, onVehicleTap, boardWidth, boardHeight,
+  cityMap, vehicles, riders, assignments, selectedVehicleId, onTap, boardWidth, boardHeight,
 }: Props) {
   const { rows, cols, nodes, edges } = cityMap;
 
@@ -62,19 +66,17 @@ export default function GameBoard({
     [nodes, boardWidth, boardHeight, rows, cols],
   );
 
-  // Build route paths for all assignments
+  // Build route overlay segments for all assignments
   const routeSegments: Array<{ x1: number; y1: number; x2: number; y2: number; color: string }> = [];
   for (const assignment of assignments) {
     const vehicle = vehicles.find(v => v.id === assignment.vehicleId);
     if (!vehicle) continue;
     const color = VEHICLE_COLORS[vehicle.type] ?? Colors.routeGlow;
-
     let current = vehicle.startNodeId;
     for (const stop of assignment.stops) {
       const rider = riders.find(r => r.id === stop.riderId);
       if (!rider) continue;
       const targetNodeId = stop.type === 'pickup' ? rider.pickupNodeId : rider.dropoffNodeId;
-
       const result = dijkstra(cityMap, current, targetNodeId);
       if (result.found) {
         for (let i = 0; i < result.path.length - 1; i++) {
@@ -87,54 +89,67 @@ export default function GameBoard({
     }
   }
 
-  const selectedAssignment = assignments.find(a => a.vehicleId === selectedVehicleId);
-  const assignedRiderIds = new Set(selectedAssignment?.stops.map(s => s.riderId) ?? []);
+  // Which riders have which stops already assigned (for visual feedback)
+  const assignedPickups  = new Set<string>();
+  const assignedDropoffs = new Set<string>();
+  for (const a of assignments) {
+    for (const s of a.stops) {
+      if (s.type === 'pickup')  assignedPickups.add(s.riderId);
+      if (s.type === 'dropoff') assignedDropoffs.add(s.riderId);
+    }
+  }
 
-  function handleBoardPress(e: any) {
+  function handlePress(e: any) {
     const { locationX: x, locationY: y } = e.nativeEvent;
 
-    // Check vehicle tap first
+    // 1. Check vehicle tap (priority)
     for (const v of vehicles) {
       const pos = nodePos(v.startNodeId);
-      if (Math.abs(x - pos.x) < 22 && Math.abs(y - pos.y) < 22) {
-        onVehicleTap(v.id);
+      if (Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2) < 22) {
+        onTap({ nodeId: v.startNodeId });
         return;
       }
     }
 
-    // Check rider pickup tap
+    // 2. Check rider DROPOFF tap (small squares at destination)
+    for (const r of riders) {
+      const pos = nodePos(r.dropoffNodeId);
+      if (Math.abs(x - pos.x) < 14 && Math.abs(y - pos.y) < 14) {
+        onTap({ nodeId: r.dropoffNodeId, riderId: r.id, stopType: 'dropoff' });
+        return;
+      }
+    }
+
+    // 3. Check rider PICKUP tap (circles at pickup point)
     for (const r of riders) {
       const pos = nodePos(r.pickupNodeId);
-      if (Math.abs(x - pos.x) < 20 && Math.abs(y - pos.y) < 20) {
-        onNodeTap(r.pickupNodeId);
+      if (Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2) < 18) {
+        onTap({ nodeId: r.pickupNodeId, riderId: r.id, stopType: 'pickup' });
         return;
       }
     }
 
-    // Find closest node
+    // 4. Nearest node fallback (to deselect vehicle)
     let closest: MapNode | null = null;
     let closestDist = 28;
     for (const node of nodes) {
-      const pos = getNodePosition(node, boardWidth, boardHeight, rows, cols);
+      const pos  = getNodePosition(node, boardWidth, boardHeight, rows, cols);
       const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closest = node;
-      }
+      if (dist < closestDist) { closestDist = dist; closest = node; }
     }
-    if (closest) onNodeTap(closest.id);
+    if (closest) onTap({ nodeId: closest.id });
   }
 
   return (
-    <View style={{ width: boardWidth, height: boardHeight }} onTouchEnd={handleBoardPress}>
+    <View style={{ width: boardWidth, height: boardHeight }} onTouchEnd={handlePress}>
       <Svg width={boardWidth} height={boardHeight}>
+
         {/* Roads */}
         {edges.map(edge => {
           const from = nodePos(edge.from);
           const to   = nodePos(edge.to);
           return (
-            <Line
-              key={edge.id}
+            <Line key={edge.id}
               x1={from.x} y1={from.y} x2={to.x} y2={to.y}
               stroke={ROAD_COLORS[edge.type] ?? ROAD_COLORS.normal}
               strokeWidth={edge.type === 'closed' ? 2 : 3}
@@ -145,50 +160,52 @@ export default function GameBoard({
 
         {/* Route overlays */}
         {routeSegments.map((seg, i) => (
-          <Line
-            key={`route_${i}`}
+          <Line key={`route_${i}`}
             x1={seg.x1} y1={seg.y1} x2={seg.x2} y2={seg.y2}
-            stroke={seg.color}
-            strokeWidth={5}
-            opacity={0.7}
+            stroke={seg.color} strokeWidth={5} opacity={0.65}
           />
         ))}
 
-        {/* Intersection nodes */}
+        {/* Intersection dots */}
         {nodes.map(node => {
           const pos = nodePos(node.id);
+          return <Circle key={node.id} cx={pos.x} cy={pos.y} r={2.5} fill={Colors.nodeDefault} />;
+        })}
+
+        {/* Rider DROPOFF squares (destination) */}
+        {riders.map(r => {
+          const pos   = nodePos(r.dropoffNodeId);
+          const color = RIDER_COLORS[r.type] ?? Colors.riderStandard;
+          const done  = assignedDropoffs.has(r.id);
+          const half  = 7;
           return (
-            <Circle
-              key={node.id}
-              cx={pos.x} cy={pos.y} r={3}
-              fill={Colors.nodeDefault}
-            />
+            <G key={`drop_${r.id}`}>
+              <Rect
+                x={pos.x - half} y={pos.y - half}
+                width={half * 2} height={half * 2}
+                rx={2}
+                fill={done ? Colors.success : color}
+                opacity={done ? 0.9 : 0.55}
+              />
+              <SvgText x={pos.x} y={pos.y + 3.5} fontSize={7} fontWeight="bold" fill="#fff" textAnchor="middle">
+                D
+              </SvgText>
+            </G>
           );
         })}
 
-        {/* Rider pickup markers */}
+        {/* Rider PICKUP circles */}
         {riders.map(r => {
-          const pickupPos  = nodePos(r.pickupNodeId);
-          const dropoffPos = nodePos(r.dropoffNodeId);
-          const color    = RIDER_COLORS[r.type] ?? Colors.riderStandard;
-          const label    = RIDER_LABELS[r.type] ?? 'P';
-          const isAssigned = assignedRiderIds.has(r.id);
-
+          const pos   = nodePos(r.pickupNodeId);
+          const color = RIDER_COLORS[r.type] ?? Colors.riderStandard;
+          const done  = assignedPickups.has(r.id);
           return (
-            <G key={r.id}>
-              {/* Pickup - larger, pulsing appearance */}
-              <Circle cx={pickupPos.x} cy={pickupPos.y} r={12} fill={color} opacity={0.2} />
-              <Circle cx={pickupPos.x} cy={pickupPos.y} r={8}  fill={isAssigned ? Colors.success : color} />
-              <SvgText
-                x={pickupPos.x} y={pickupPos.y + 4}
-                fontSize={8} fontWeight="bold"
-                fill="#fff" textAnchor="middle"
-              >
-                {label}
+            <G key={`pick_${r.id}`}>
+              <Circle cx={pos.x} cy={pos.y} r={14} fill={color} opacity={0.18} />
+              <Circle cx={pos.x} cy={pos.y} r={10} fill={done ? Colors.success : color} opacity={done ? 0.95 : 0.9} />
+              <SvgText x={pos.x} y={pos.y + 4} fontSize={9} fontWeight="bold" fill="#fff" textAnchor="middle">
+                {RIDER_LABELS[r.type] ?? 'P'}
               </SvgText>
-
-              {/* Dropoff - smaller diamond */}
-              <Circle cx={dropoffPos.x} cy={dropoffPos.y} r={5} fill={color} opacity={0.6} />
             </G>
           );
         })}
@@ -198,24 +215,18 @@ export default function GameBoard({
           const pos   = nodePos(v.startNodeId);
           const color = VEHICLE_COLORS[v.type] ?? Colors.vehicleCompact;
           const isSelected = v.id === selectedVehicleId;
-
           return (
             <G key={v.id}>
-              {isSelected && (
-                <Circle cx={pos.x} cy={pos.y} r={18} fill={color} opacity={0.25} />
-              )}
+              {isSelected && <Circle cx={pos.x} cy={pos.y} r={20} fill={color} opacity={0.2} />}
               <Circle cx={pos.x} cy={pos.y} r={13} fill={color} />
-              <Circle cx={pos.x} cy={pos.y} r={13} fill="none" stroke={isSelected ? '#fff' : color} strokeWidth={2} />
-              <SvgText
-                x={pos.x} y={pos.y + 4}
-                fontSize={8} fontWeight="bold"
-                fill="#fff" textAnchor="middle"
-              >
+              <Circle cx={pos.x} cy={pos.y} r={13} fill="none" stroke={isSelected ? '#fff' : color} strokeWidth={isSelected ? 2.5 : 1.5} />
+              <SvgText x={pos.x} y={pos.y + 4} fontSize={8} fontWeight="bold" fill="#fff" textAnchor="middle">
                 {v.type === 'compact_cab' ? 'CAB' : v.type === 'city_van' ? 'VAN' : v.type === 'access_van' ? 'ACC' : 'SHT'}
               </SvgText>
             </G>
           );
         })}
+
       </Svg>
     </View>
   );

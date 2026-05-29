@@ -87,9 +87,9 @@ export default function HomeScreen({ navigation }: Props) {
           </View>
         </Animated.View>
       </SafeAreaView>
-      <View style={styles.bannerSlot}>
+      <SafeAreaView edges={['bottom']} style={styles.bannerSlot}>
         <BannerAdComponent />
-      </View>
+      </SafeAreaView>
     </View>
   );
 }

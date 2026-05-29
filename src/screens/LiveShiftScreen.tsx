@@ -149,7 +149,7 @@ export default function LiveShiftScreen({ navigation, route }: Props) {
 
   return (
     <View style={styles.container}>
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Shift in Progress</Text>
           <View style={styles.speedRow}>

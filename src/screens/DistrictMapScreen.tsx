@@ -87,9 +87,9 @@ export default function DistrictMapScreen({ navigation, route }: Props) {
           })}
         </ScrollView>
       </SafeAreaView>
-      <View style={styles.bannerSlot}>
+      <SafeAreaView edges={['bottom']} style={styles.bannerSlot}>
         <BannerAdComponent />
-      </View>
+      </SafeAreaView>
     </View>
   );
 }

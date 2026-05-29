@@ -61,7 +61,7 @@ For privacy questions, please contact the developer through the Google Play Stor
 export default function PrivacyPolicyScreen({ navigation }: Props) {
   return (
     <View style={styles.container}>
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()}>
             <Text style={styles.backText}>{'< Back'}</Text>

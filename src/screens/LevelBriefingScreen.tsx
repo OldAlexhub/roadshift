@@ -129,7 +129,7 @@ export default function LevelBriefingScreen({ navigation, route }: Props) {
           </View>
         </ScrollView>
 
-        <View style={styles.footer}>
+        <SafeAreaView edges={['bottom']} style={styles.footer}>
           <BannerAdComponent />
           <TouchableOpacity
             style={styles.startBtn}
@@ -137,7 +137,7 @@ export default function LevelBriefingScreen({ navigation, route }: Props) {
           >
             <Text style={styles.startBtnText}>Start Planning</Text>
           </TouchableOpacity>
-        </View>
+        </SafeAreaView>
       </SafeAreaView>
     </View>
   );

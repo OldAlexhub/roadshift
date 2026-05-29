@@ -138,9 +138,9 @@ export default function SettingsScreen({ navigation }: Props) {
           </Text>
         </ScrollView>
       </SafeAreaView>
-      <View style={styles.bannerSlot}>
+      <SafeAreaView edges={['bottom']} style={styles.bannerSlot}>
         <BannerAdComponent />
-      </View>
+      </SafeAreaView>
     </View>
   );
 }

@@ -99,7 +99,7 @@ export default function TutorialScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <Text style={styles.stepText}>{step + 1} / {STEPS.length}</Text>
           <TouchableOpacity onPress={finish}>

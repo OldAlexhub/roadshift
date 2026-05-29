@@ -59,7 +59,7 @@ export default function ResultsScreen({ navigation, route }: Props) {
 
   return (
     <View style={styles.container}>
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <Animated.View style={[styles.inner, { opacity: fadeAnim }]}>
           <Text style={styles.levelLabel}>Level {levelId} Complete</Text>
 

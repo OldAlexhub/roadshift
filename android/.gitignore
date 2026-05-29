@@ -1,0 +1,15 @@
+# Build artifacts
+.gradle
+local.properties
+.idea
+*.iml
+*.hprof
+app/build/
+build/
+
+# Signing (never commit keystore or credentials)
+app/keystore/
+keystore/
+*.keystore
+*.jks
+keystore.properties

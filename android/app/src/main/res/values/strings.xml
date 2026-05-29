@@ -1,3 +1,5 @@
 <resources>
-    <string name="app_name">roadshift</string>
+    <string name="app_name">RoadShift: Traffic Puzzle</string>
+    <!-- AdMob App ID - debug uses test ID, release uses production ID -->
+    <string name="admob_app_id">ca-app-pub-7831002909037560~7106259586</string>
 </resources>

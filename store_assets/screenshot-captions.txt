@@ -1,0 +1,23 @@
+Screenshot 1 (Home Screen):
+"Your shift starts here. Launch the campaign or explore your district map."
+
+Screenshot 2 (District Map):
+"Six city districts, 60 levels. Unlock each as you earn stars."
+
+Screenshot 3 (Level Briefing):
+"Study the vehicles, riders, and road conditions before you plan."
+
+Screenshot 4 (Dispatch Board):
+"Select vehicles, assign riders, and preview your planned routes on the city grid."
+
+Screenshot 5 (Live Shift):
+"Watch your plan play out. Vehicles move through the city and riders board and alight."
+
+Screenshot 6 (Results):
+"Stars, score, performance breakdown, and achievements earned."
+
+Screenshot 7 (Achievements):
+"Track your progress from First Shift to City Cleared."
+
+Screenshot 8 (Settings):
+"Sound, haptics, privacy options, and progress reset all in one place."

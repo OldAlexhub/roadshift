@@ -1,0 +1,1 @@
+C:\Users\moham\Desktop\roadshift\android\app\build\intermediates\cxx\RelWithDebInfo\6t506f5b\obj\arm64-v8a

@@ -1,0 +1,9 @@
+Version 1.0.0 - Initial Release
+
+RoadShift: Traffic Puzzle launches with:
+- 60 campaign levels across 6 city districts
+- Four vehicle types and four rider types
+- Real graph-based route planning engine
+- Animated live shift simulation
+- Three-star scoring and 14 achievements
+- Offline gameplay, no account required

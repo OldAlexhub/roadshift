@@ -1,0 +1,41 @@
+RoadShift: Traffic Puzzle puts you in charge of a city transit fleet on the night shift. Plan pickup and dropoff routes, match riders to the right vehicles, and beat the grid before the clock runs out.
+
+PLAN ROUTES, EARN STARS
+Assign vehicles to waiting riders, plan the most efficient route, and launch your shift. Earn up to three stars per level based on timing, route efficiency, and completing special objectives.
+
+60 CAMPAIGN LEVELS
+Work through six city districts, each introducing new challenges:
+- First Shift: Learn the basics of route planning and dispatch
+- Downtown Flow: Navigate congested streets and manage vehicle capacity
+- Access Line: Match accessible riders to the right vehicles
+- Rain Circuit: Reroute around closures and rain-slowed streets
+- Event Surge: Handle post-event surges with limited vehicles and tight windows
+- Midnight Grid: The campaign finale combining every mechanic
+
+REAL ROUTE PLANNING
+RoadShift uses a real graph-based route engine. Routes are calculated, not faked. Congested streets slow you down. Closed roads require genuine detours. Every plan must work.
+
+FOUR VEHICLE TYPES
+- Compact Cab: Fast, carries one rider group
+- City Van: Carries two rider groups
+- Access Van: Carries two, fully wheelchair accessible
+- Shuttle: Carries three, great for event surges
+
+FOUR RIDER TYPES
+- Standard: Regular pickup and dropoff
+- Priority: Tighter deadlines, plan carefully
+- Accessible: Must be matched to an Access Van
+- Group: Uses additional vehicle capacity
+
+ANIMATED LIVE SIMULATION
+After you plan the shift, watch vehicles move through the city, pick up riders, and complete deliveries. Control simulation speed or skip to results.
+
+PLAY OFFLINE
+All 60 levels work without internet. Your progress, scores, and achievements are saved locally on your device. No account required.
+
+FREE WITH ADS
+RoadShift is free to play and supported by ads. No purchases required to access any level or feature. Ad privacy choices are available in Settings.
+
+No manipulative mechanics. No energy timers. No streak pressure. Just puzzle strategy, city atmosphere, and the satisfaction of a perfectly planned shift.
+
+Plan routes. Move riders. Beat the grid.
